@@ -1,5 +1,5 @@
 # Introduction group project (Delta)
-##Milestone 1
+## Milestone 1
 
 
 It is very difficult today to comprehend the success of a politician in all levels of campaign and governance without looking at the social median. 
