@@ -1,5 +1,3 @@
-# group_project
-
 # Introduction group project (Delta)
 ##Milestone 1
 
