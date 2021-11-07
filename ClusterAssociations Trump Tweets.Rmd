@@ -1,0 +1,229 @@
+---
+title: "My Graphs"
+output: html_notebook
+---
+
+
+```{r include=FALSE}
+library(graphics)
+library(purrr)
+library(stringr)
+library(tm)
+library(syuzhet)
+library(NLP)
+library(tidyverse)
+library(tidytext)
+library(widyr)
+library(igraph)
+library(ggraph)
+library(wordcloud2)
+library(markovchain)
+# install.packages(c('widyr', 'ggraph'))
+```
+
+
+
+```{r include=FALSE}
+setwd('~/Documents/UMGC/DATA630/Group Project')
+tweets <- read.csv('Donald-Tweets!.csv')
+```
+
+
+
+```{r include=FALSE}
+tweets %>% count(Tweet_Id, sort = T)
+
+tweets %>% head(10) %>% pull(Tweet_Text)
+
+```
+
+
+```{r include=FALSE}
+clean_tweets <- function(x) {
+  x %>%
+    # Remove URLs
+    str_remove_all(" ?(f|ht)(tp)(s?)(://)(.*)[.|/](.*)") %>%
+    # Remove mentions e.g. "@my_account"
+    str_remove_all("@[[:alnum:]_]{4,}") %>%
+    # Remove hashtags
+    str_remove_all("#[[:alnum:]_]+") %>%
+    # Replace "&" character reference with "and"
+    str_replace_all("&amp;", "and") %>%
+    # Replace Donald Trump with ''
+    str_replace("donald", ' ') %>%
+    str_replace('trump', ' ') %>%
+    # Remove puntucation, using a standard character class
+    str_remove_all("[[:punct:]]") %>%
+    # Remove "RT: " from beginning of retweets
+    str_remove_all("^RT:? ") %>%
+    # Replace any newline characters with a space
+    str_replace_all("\\\n", " ") %>%
+    # Make everything lowercase
+    str_to_lower() %>%
+    # Remove any trailing whitespace around the text
+    str_trim("both")
+}
+
+tweets$Tweet_Text <- tweets$Tweet_Text %>% clean_tweets
+```
+
+
+```{r include=FALSE}
+tweets <-  tweets %>% select(-c(Date, Time, Type, Media_Type, Tweet_Url, X, X.1, Hashtags))
+```
+
+
+
+
+```{r include=FALSE}
+words <- tweets %>%
+  unnest_tokens(output = word, input = Tweet_Text) %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(str_detect(word, "[:alpha:]")) %>%
+  distinct()
+```
+
+
+
+```{r include=FALSE}
+tweet_ids <- words %>%
+  count(word, name = 'occurances') %>%
+  filter(occurances >= 100)
+
+word_correlation <- words %>%
+  semi_join(tweet_ids, by = "word") %>%
+  pairwise_cor(item = word, feature = Tweet_Id) %>%
+  filter(correlation >= 0.2)
+```
+
+
+
+
+
+# Visualization
+
+The graph below represents the connections between the correlated words extracted through clustering. The lighter the color the more frequently the word was used in tweet body. The thickness of the lines represent the strenght of the correlations between the words. 
+
+
+## Example 1
+
+For example, the graph below has all the default configurations. Even with somewhat confusing layout, it is possible to spot some clusters like "hillary," "clinton," and "crooked." These groups of words had one of the most potent correlations and numerous use cases. 
+
+```{r echo=FALSE}
+graph_from_data_frame(d = word_correlation, vertices = tweet_ids %>%
+                        semi_join(word_correlation, by = c("word" = "item1"))) %>%
+  ggraph(layout = 'stress') +
+  geom_edge_link(aes(alpha = correlation)) +
+  geom_node_point() +
+  geom_node_text(aes(color = occurances, label = name), repel = TRUE)
+
+```
+
+
+
+```{r include=FALSE}
+generate_word_graph <- function(words,
+                                min_num_of_tweets = 100,
+                                minimum_correlation = 0.2) {
+  tweet_ids <- words %>%
+  count(word, name = 'occurances') %>%
+  filter(occurances >= min_num_of_tweets)
+
+  word_correlation <- words %>%
+  semi_join(tweet_ids, by = "word") %>%
+  pairwise_cor(item = word, feature = Tweet_Id) %>%
+  filter(correlation >= minimum_correlation)
+  
+  graph_from_data_frame(d = word_correlation, vertices = tweet_ids %>%
+                        semi_join(word_correlation, by = c("word" = "item1"))) %>%
+    ggraph(layout = 'fr') +
+    geom_edge_link(aes(alpha = correlation)) +
+    geom_node_point() +
+    geom_node_text(aes(color = occurances, label = name), repel = TRUE)
+  }
+```
+
+
+## Example 2
+
+The example below represents the words that have been used at least a 100 times in all the tweets with correlation factor of 0.3. This representation clearly outlines six distinct word cluster associations. The 'trump' was mostly used with 'donald,' 'win,' 'gop,' and 'time' which may suggest the intentions to win as a GOP candidate and that it was the right time for this particular candidate.
+
+The 'iowa' and 'hampshire' tokens reprent a separate cluster which indicates the importance of the early voting states. The 'tonight,' 'enjoy,' and 'interviewed' represented another cluster that was indicative of the media exposure and interview appearances. 
+
+The 'crooked,' 'hillary,' and 'clinton' represented a high barrage os negative campaign slogans. The 'hillary' token is the second most frequent word that was used during the tweet campaign. 
+
+Even though, the debate cluster with the republican opponents in the presidential race is larger than any other cluster, the usage of the names of former president Trump were less frequent and eventually seized to stand out once the correlation has been adjusted. 
+
+```{r echo=FALSE}
+words %>% generate_word_graph(100, 0.3)
+```
+
+
+## Example 3
+
+This graph represents 200 use cases for each word with 0.2 correlation coefficient. 
+
+```{r echo=FALSE}
+words %>% generate_word_graph(200, 0.2)
+```
+
+
+## Example 4
+
+Once the limit on words reached 50 the cluster became less defined. The new words were added to the graph, however, the main theme groups remained the same. 
+
+```{r echo=FALSE}
+words %>% generate_word_graph(50, 0.3)
+```
+
+
+## Word Cloud Example
+
+The word cloud below represents the most used words used during the Trump's campaign tweeter postings. The America was followed by Hillary was then followed by the People. This visualization tool might be useful to extract the true priorities of the speaker across several thousand postings to reveal the hidden objectives.
+
+```{r echo=FALSE}
+wordcloud2(tweet_ids, color = "random-light", backgroundColor="black", shape = 'diamond')
+```
+
+
+
+# Markov Chain 
+
+The first 30 words represented below were extracted using the Markov Chain predictive model. The order in this instance has no weight in determining the associations the algorithm was able to insight. 
+
+
+```{r include=FALSE}
+tweet_words <- words$word
+n_distinct(tweet_words)
+head(tweet_words, 30)
+```
+
+
+```{r include=FALSE}
+fit_markov <- markovchainFit(tweet_words, method='laplace')
+```
+
+
+## Tweet Generation
+
+The model below was able to generate 10 tweets using the Former President Trump's tweeter text corpus. 
+
+```{r echo=FALSE}
+for (i in 1:50) {
+  
+  set.seed(i)
+  markovchainSequence(n = 20, markovchain = fit_markov$estimate) %>%
+    paste(collapse = " ") %>%
+    str_to_sentence() %>%
+    print()
+}
+
+```
+
+
+
+```{r}
+
+```
+
+
